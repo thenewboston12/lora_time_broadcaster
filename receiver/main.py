@@ -13,55 +13,85 @@ bt.deinit()
 server = Server()
 server.deinit()
 
-
 pycom.heartbeat(False)
+
+# colors
 green = 0x00FF00
 red = 0xFF0000
 off = 0x000000
 
 # define timezone offset
-_TIMEZONE_OFFSET = 6 * 60 * 60
-# define the period in which time information comes from the gateway in ms
-_TIME_PERIOD_MS = 5000
+TIMEZONE_OFFSET = 6 * 60 * 60
 
-lora = LoRa(mode=LoRa.LORA, region=LoRa.EU868)
+# define the period in which time information comes from the gateway in ms
+TIME_PERIOD_MS = 5000
+GUARD_TIME = 750
+
+
+# Initialize the LoRa radio module
+# SF = 12
+lora = LoRa(mode=LoRa.LORA, region=LoRa.EU868,  bandwidth=LoRa.BW_125KHZ,  sf=12)
 
 s = socket.socket(socket.AF_LORA, socket.SOCK_RAW)
 s.setblocking(False)
 
 # set timezone offset
-time.timezone(_TIMEZONE_OFFSET)
-
+time.timezone(TIMEZONE_OFFSET)
 
 synced = False
 
 print("listening...")
-chrono = Timer.Chrono()
 
+chrono        = Timer.Chrono()
 wakeup_chrono = Timer.Chrono()
+chrono2       = Timer.Chrono()
+chrono3       = Timer.Chrono()
+chronoProcess = Timer.Chrono()
 
 while True:
     if synced:
         print("\n---IN SYNC---")
-        # used for timing
-        wakeup_chrono.reset()
-        wakeup_chrono.start()
-
 
         # turn on the radio module
+        wakeup_chrono.reset()
+        wakeup_chrono.start()
         lora.power_mode(LoRa.ALWAYS_ON)
+        # print(str(wakeup_chrono.read_ms())+"ms since waking up the radio")
 
+        loop_t = chrono3.read_ms()
+        print("1 loop took", str(loop_t), "ms")
+        chrono3.reset()
+        chrono3.start()
 
-        print(str(wakeup_chrono.read_ms())+"ms since waking up the radio")
-        buf = s.recv(64)
-
+        buf = ''
         chrono.reset()
         chrono.start()
-        # wait for 300ms for the incoming sync packet
-        # it waits 300ms initially then 50ms
-        while chrono.read_ms() < 300 and len(buf) < 1:
-            buf = s.recv(64)
+        # while chrono.read_ms() < 1500 and len(buf) < 1:
+        #     buf = s.recv(32)
+        # wait_time = chrono.read_ms()
+
+        print(str(chrono2.read_ms())+"ms since first receive")
+        chrono2.reset()
+
+        try:
+            s.setblocking(True)
+            s.settimeout(2)
+            buf = s.recv(32)
+            while (True):
+                buf  = s.recv(32)
+                if(len(buf)> 1):
+                    print("success")
+                    break
+
+        except:
+            print("socket timeout ")
+
+        print("receiver waited for " + str(chrono.read_ms()) + "ms")
         chrono.stop()
+
+        chronoProcess.reset()
+        chronoProcess.start()
+
 
         # if missed the sync timing then packet length will be 0
         # and receiver is out of sync
@@ -71,34 +101,38 @@ while True:
             pycom.rgbled(off)
 
         # right size for the incoming integer
-        elif len(buf) >1 and len(buf) < 5:
-
+        elif len(buf) >1:
             seconds = int.from_bytes(buf, 'little', False)
-
             out = time.localtime(seconds)
-
-            print("{}.{}.{} {}:{}:{}".format(out[2],out[1],out[0],out[3],out[4],out[5]))
-
+            print("Time: {}.{}.{} {}:{}:{}".format(out[2],out[1],out[0],out[3],out[4],out[5]))
             pycom.rgbled(green)
 
             # Turn off the receiver (radio module)
             lora.power_mode(LoRa.SLEEP)
 
-            # 50ms is enough to wake up the radio and receive the sync signal
-            time_to_sleep = _TIME_PERIOD_MS -50
-            time.sleep_ms(time_to_sleep)
+            # if loop_time < 1000 and big_loop >40:
+            #     GUARD_TIME -= 30
+            GUARD_TIME  = 500
+            t = TIME_PERIOD_MS - GUARD_TIME
+
+            # print("b4 sleep: " + str(chronoProcess.read_ms())+"ms")
+            time.sleep_ms(t)
         else :
             # unexpected case when we got a large packet
             synced = False
             pycom.rgbled(off)
             print("buffer length mismatch ")
 
-    # If not synced
+    # If not synced ###########################################################
     else:
-        print("OUT OF SYNC")
-        buf  = s.recv(512)
+        print("---OUT OF SYNC---")
+        s.setblocking(True)
+        buf  = s.recv(32)
+        # s.setblocking(False)
 
         if len(buf) >1 and len(buf) < 5:
+            chrono2.reset()
+            chrono2.start()
             seconds = int.from_bytes(buf, 'little', False)
 
             out = time.localtime(seconds)
@@ -113,9 +147,8 @@ while True:
             lora.power_mode(LoRa.SLEEP)
 
             # wait until the next time period
-            # needs to wake up earlier(500ms) to get the receiver ready()
-            time_to_sleep = _TIME_PERIOD_MS - 500
-            time.sleep_ms(time_to_sleep)
+            t = TIME_PERIOD_MS - 1000
+            time.sleep_ms(t)
 
         else:
-            time.sleep_ms(500)
+            time.sleep_ms(50)
