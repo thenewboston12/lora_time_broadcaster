@@ -1,4 +1,4 @@
-# lora_time_broadcaster
+# lora_time_broadcaster (Using Spreading Factor 12) Guard times are still too long
 ## gateway 
 LoRa gateway that transmits the NTP time at regular intervals defined by `_TIME_PERIOD_MS` currently set to 5 seconds
 Also, the WiFi credentials need to be altered by changing `WIFI_SSID` and `_WIFI_PASS` variables
