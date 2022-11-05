@@ -10,6 +10,8 @@ import utime
 import gc
 from machine import RTC
 import machine
+import struct
+import ubinascii
 
 # saving energy by disabling all the networks
 bt = Bluetooth()
@@ -45,8 +47,6 @@ _TIMEZONE_OFFSET = 6* 60**2 # For GMT +6
 # time period to send the sync packet (in ms)
 _TIME_PERIOD_MS = 5000
 
-
-
 # set LoRa parameters
 lora = LoRa(mode=LoRa.LORA, region=LoRa.EU868, bandwidth=LoRa.BW_125KHZ)
 
@@ -62,6 +62,10 @@ while not wlan.isconnected():
 print("connected to WiFi")
 
 pycom.rgbled(blue)
+
+
+_PREFIX = lora.mac()[7]
+_LORA_PKG_FORMAT = "!bi"
 
 
 # Connect to ntp server
@@ -88,16 +92,24 @@ while True:
     pycom.rgbled(green)
 
     cur_time = time.localtime()
-    print("Current time: ", cur_time)
+    print("\nCurrent time: ", cur_time)
 
     # get precise time
     seconds = time.time() +1
+    seconds = int(seconds)
 
-    bytes = seconds.to_bytes(4, 'little', False)
+    pkg = struct.pack(_LORA_PKG_FORMAT, _PREFIX, seconds)
 
-    # Just send the seconds
-    s.send(bytes)
-    print("Sent the time")
+    # send 1 byte + seconds
+    s.send(pkg)
+
+    # Print some stats
+    print("Time On Air:", lora.stats()[7], "ms")
+
+    print("RSSI:", lora.stats()[1])
+
+    print("SNR:", lora.stats()[2])
+
 
     pycom.rgbled(off)
 

@@ -6,6 +6,7 @@ import time
 import pycom
 import struct
 from machine import Timer
+import struct
 
 # Turn off unnecessary modules to conserve energy
 bt = Bluetooth()
@@ -23,6 +24,8 @@ off = 0x000000
 _TIMEZONE_OFFSET = 6 * 60 * 60
 # define the period in which time information comes from the gateway in ms
 _TIME_PERIOD_MS = 5000
+_LORA_RCV_PKG_FORMAT = "!Bi"
+
 
 lora = LoRa(mode=LoRa.LORA, region=LoRa.EU868)
 
@@ -37,7 +40,6 @@ synced = False
 
 print("listening...")
 chrono = Timer.Chrono()
-
 wakeup_chrono = Timer.Chrono()
 
 while True:
@@ -52,7 +54,7 @@ while True:
         lora.power_mode(LoRa.ALWAYS_ON)
 
 
-        print(str(wakeup_chrono.read_ms())+"ms since waking up the radio")
+        print(str(wakeup_chrono.read_ms())+"ms since waking up the radio module")
         buf = s.recv(64)
 
         chrono.reset()
@@ -71,9 +73,8 @@ while True:
             pycom.rgbled(off)
 
         # right size for the incoming integer
-        elif len(buf) >1 and len(buf) < 5:
-
-            seconds = int.from_bytes(buf, 'little', False)
+        elif len(buf) >  2:
+            prefix, seconds = struct.unpack(_LORA_RCV_PKG_FORMAT, buf)
 
             out = time.localtime(seconds)
 
@@ -98,9 +99,10 @@ while True:
         print("OUT OF SYNC")
         buf  = s.recv(512)
 
-        if len(buf) >1 and len(buf) < 5:
-            seconds = int.from_bytes(buf, 'little', False)
+        if len(buf) >1 :
+            prefix, seconds = struct.unpack(_LORA_RCV_PKG_FORMAT, buf)
 
+            print("PREFIX: ", prefix)
             out = time.localtime(seconds)
 
             print("\n{}.{}.{} {}:{}:{}\n".format(out[2],out[1],out[0],out[3],out[4],out[5]))
