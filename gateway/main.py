@@ -35,11 +35,11 @@ purple = 0xb134eb
 
 # change this for appropriate WiFi access point
 
-_WIFI_SSID = "TP-Link_56B1"
-_WIFI_PASS = "34134634"
+#_WIFI_SSID = "TP-Link_56B1"
+#_WIFI_PASS = "34134634"
 
-# _WIFI_SSID = "NU"
-# _WIFI_PASS = "1234512345"
+_WIFI_SSID = "NU"
+_WIFI_PASS = "1234512345"
 
 _NTP_URL = "pool.ntp.org"
 _TIMEZONE_OFFSET = 6* 60**2 # For GMT +6
@@ -64,8 +64,8 @@ print("connected to WiFi")
 pycom.rgbled(blue)
 
 
-_PREFIX = lora.mac()[7]
-_LORA_PKG_FORMAT = "!bi"
+_LORA_TIME_FORMAT = "!I"
+_LORA_PREFIX_FORMAT = "!b"
 
 
 # Connect to ntp server
@@ -96,12 +96,19 @@ while True:
 
     # get precise time
     seconds = time.time() +1
-    seconds = int(seconds)
 
-    pkg = struct.pack(_LORA_PKG_FORMAT, _PREFIX, seconds)
+    sync_pkg = struct.pack(_LORA_PREFIX_FORMAT, ord('S'))
+    time_pkg = struct.pack(_LORA_TIME_FORMAT, seconds)
 
-    # send 1 byte + seconds
-    s.send(pkg)
+    s.setblocking(True)
+
+    # send sync packet
+    s.send(sync_pkg)
+
+    print("Sent sync packet")
+    # send time packet
+    s.send(time_pkg)
+    print("Sent time packet")
 
     # Print some stats
     print("Time On Air:", lora.stats()[7], "ms")
@@ -116,4 +123,3 @@ while True:
     # Send sync time every _TIME_PERIOD_MS milliseconds
     time.sleep_ms(_TIME_PERIOD_MS)
 
-print("THE END")
