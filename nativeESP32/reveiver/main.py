@@ -1,162 +1,131 @@
-from network import LoRa
-from network import Bluetooth
-from network import Server
 import socket
+import struct
+import network
+import binascii
+import ubinascii
 import time
-import pycom
-import struct
-from machine import Timer
-import struct
+import uos
+import _thread
+import uerrno
+import sys
+from machine import SoftI2C, Pin, SPI, reset, idle, RTC
+from lora import LoRa
+import ssd1306
+from time import sleep
+import utime
+from chrono import Chrono
 
-# Turn off unnecessary modules to conserve energy
-bt = Bluetooth()
-bt.deinit()
-server = Server()
-server.deinit()
 
+led = Pin(25,Pin.OUT) # Heltec V2
+# led = Pin(2,Pin.OUT) # TTGO
+rst = Pin(16, Pin.OUT)
+rst.value(1)
+scl = Pin(15, Pin.OUT, Pin.PULL_UP)
+sda = Pin(4, Pin.OUT, Pin.PULL_UP)
+i2c = SoftI2C(scl=scl, sda=sda, freq=450000)
+oled = ssd1306.SSD1306_I2C(128, 64, i2c, addr=0x3c)
+oled.poweron()
 
-pycom.heartbeat(False)
-green = 0x00FF00
-red = 0xFF0000
-off = 0x000000
+def oled_lines(line1, line2, line3, line4):
+    oled.fill(0)
+    oled.text(line1, 0, 0)
+    oled.text(line2, 0, 10)
+    oled.text(line3, 0, 25)
+    oled.text(line4, 0, 35)
+    oled.show()
 
-# define timezone offset
-_TIMEZONE_OFFSET = 6 * 60 * 60
-# define the period in which time information comes from the gateway in ms
+oled_lines("Time Sync", "and Broadcaster", " ", " ")
+
+# SPI pins
+SCK  = 5
+MOSI = 27
+MISO = 19
+CS   = 18
+RX   = 26
+
+spi = SPI(
+    1,
+    baudrate=1000000,
+    sck=Pin(SCK, Pin.OUT, Pin.PULL_DOWN),
+    mosi=Pin(MOSI, Pin.OUT, Pin.PULL_UP),
+    miso=Pin(MISO, Pin.IN, Pin.PULL_UP),
+)
+spi.init()
+
+lora = LoRa( spi, cs=Pin(CS, Pin.OUT), rx=Pin(RX, Pin.IN), )
+
+# time period to send the sync packet (in ms)
 _TIME_PERIOD_MS = 5000
-_LORA_TIME_FORMAT = "!i"
-_LORA_PREFIX_FORMAT = "!B"
 
+# set LoRa parameters
+lora.set_spreading_factor(12)
+lora.set_frequency(433.1)
 
-lora = LoRa(mode=LoRa.LORA, region=LoRa.EU868)
+_LORA_TIME_FORMAT = "!I"
+_LORA_PREFIX_FORMAT = "!b"
 
-s = socket.socket(socket.AF_LORA, socket.SOCK_RAW)
-s.setblocking(False)
+rtc = RTC()
 
-# set timezone offset
-time.timezone(_TIMEZONE_OFFSET)
+chrono = Chrono()
+need_time = 1
+xsync = 0
+xtime = 0
+timeout = 800000
+synced = 0
 
+def s_handler(recv_pkg):
+    global xsync
+    global xtime
+    # print(recv_pkg)
+    if (len(recv_pkg) == 1):
+        try:
+            (xsync,) = struct.unpack(_LORA_PREFIX_FORMAT, recv_pkg)
+        except:
+            print("Could not unpack!")
+        if (xsync == 83):
+            print("Synced!", xsync)
+    elif (len(recv_pkg) > 2) and (need_time == 1):
+        try:
+            (xtime,) = struct.unpack(_LORA_TIME_FORMAT, recv_pkg)
+        except:
+            print("Could not unpack!")
+        if (xtime > 0):
+            print("Synced time!", xtime)
 
-synced = False
-
-print("listening...")
-chrono = Timer.Chrono()
-wakeup_chrono = Timer.Chrono()
-need_time = False
-
-
-while True:
-    if synced:
-        print("\n---IN SYNC---")
-        # used for timing
-        wakeup_chrono.reset()
-        wakeup_chrono.start()
-
-        # turn on the radio module
-        lora.power_mode(LoRa.ALWAYS_ON)
-        print(str(wakeup_chrono.read_ms())+"ms since waking up the radio module")
-        buf = s.recv(64)
-
-        chrono.reset()
-        chrono.start()
-        # wait for 300ms for the incoming sync packet
-        # it waits 300ms initially then 50ms
-        while chrono.read_ms() < 300 and len(buf) < 1:
-            buf = s.recv(64)
-        chrono.stop()
-
-        # if missed the sync timing then packet length will be 0
-        # and receiver is out of sync
-
-        # received a sync packet
-        # 83 is ascii for 'S'
-        if (len(buf) > 0) and (buf[0] == 83):
-            print("SYNC: Received a sync packet")
-
-            prefix = struct.unpack(_LORA_PREFIX_FORMAT, buf)
-
-            print("SYNC: prefix ", chr(prefix[0]))
-
-            pycom.rgbled(green)
-
-            # Turn off the receiver (radio module)
-            lora.power_mode(LoRa.SLEEP)
-
-            # 50ms is enough to wake up the radio and receive the sync signal
-            time_to_sleep = _TIME_PERIOD_MS -50
-            time.sleep_ms(time_to_sleep)
-
-        # Received a time packet
-        elif need_time and (len(buf) > 2) and len(buf) <5:
-            print("SYNC: Received a time pakcet")
-            seconds = struct.unpack(_LORA_TIME_FORMAT, buf)
-
-            out = time.localtime(seconds[0])
-
-            print("{}.{}.{} {}:{}:{}".format(out[2],out[1],out[0],out[3],out[4],out[5]))
-
-            pycom.rgbled(green)
-
-            # Turn off the receiver (radio module)
-            lora.power_mode(LoRa.SLEEP)
-
-            # 50ms is enough to wake up the radio and receive the sync signal
-            time_to_sleep = _TIME_PERIOD_MS -50
-            time.sleep_ms(time_to_sleep)
-        else :
-            # unexpected case when we got a large packet
-            print("MISSED!")
-            synced = False
-            pycom.rgbled(off)
-
-
-    # If not synced
+while(True):
+    chrono.reset()
+    chrono.start()
+    oled_lines("Time Syncrhonization", "and Broadcaster", "Waiting for sync...", " ")
+    print("Waiting for sync/time...")
+    xsync = 0
+    xtime = 0
+    sync_start = chrono.read_us()
+    led.value(1)
+    lora.on_recv(s_handler)
+    lora.recv()
+    while(chrono.read_us() - sync_start < timeout) and (synced == 1):
+        if (xsync == 83):
+            break
+    while(True) and (synced == 0):
+        if (xsync == 83):
+            synced = 1
+            break
+    led.value(0)
+    if (xsync != 83):
+        synced = 0
+        print("missed sync")
+    if (need_time == 1):
+        sync_start = chrono.read_us()
+        led.value(1)
+        while(chrono.read_us() - sync_start < timeout+100000):
+            if (xtime > 0):
+                break
+        out = time.localtime(xtime)
+        print("{}.{}.{} {}:{}:{}".format(out[2],out[1],out[0],out[3],out[4],out[5]))
+        led.value(0)
+        lora.sleep()
+        time.sleep_ms(_TIME_PERIOD_MS - 80)
     else:
-        print("OUT OF SYNC")
-        buf  = s.recv(512)
-
-        # received a sync packet
-        # 83 is ascii for 'S'
-        if (len(buf) > 0) and (buf[0] == 83):
-            print("ASYNC: Received a sync packet")
-
-            prefix = struct.unpack(_LORA_PREFIX_FORMAT, buf)
-
-            print("ASYNC: prefix ", chr(prefix[0]))
-
-
-            synced = True
-
-            pycom.rgbled(green)
-
-            # Turn off the receiver (radio module)
-            lora.power_mode(LoRa.SLEEP)
-
-            # wait until the next time period
-            # needs to wake up earlier(500ms) to get the receiver ready()
-            time_to_sleep = _TIME_PERIOD_MS -500
-            time.sleep_ms(time_to_sleep)
-
-        # Received a time packet
-        elif need_time and (len(buf) > 2) and len(buf) <5:
-            print("ASYNC: Received a time pakcet")
-            seconds = struct.unpack(_LORA_TIME_FORMAT, buf)
-
-            out = time.localtime(seconds)
-
-            print("{}.{}.{} {}:{}:{}".format(out[2],out[1],out[0],out[3],out[4],out[5]))
-            synced = True
-
-            pycom.rgbled(green)
-
-            # Turn off the receiver (radio module)
-            lora.power_mode(LoRa.SLEEP)
-
-            # wait until the next time period
-            # needs to wake up earlier(500ms) to get the receiver ready()
-            time_to_sleep = _TIME_PERIOD_MS -500
-            time.sleep_ms(time_to_sleep)
-
-        else:
-            # packet did not come yet
-            time.sleep_ms(500)
+        lora.sleep()
+        time.sleep_us(_TIME_PERIOD_MS*1000 + 827392 - 80000)
+    print("--------")

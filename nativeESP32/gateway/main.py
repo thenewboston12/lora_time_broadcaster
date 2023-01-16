@@ -12,10 +12,8 @@ from machine import SoftI2C, Pin, SPI, reset, idle, RTC
 from lora import LoRa
 import ssd1306
 from time import sleep
-import time
 import utime
 import gc
-import untplib
 import _thread
 
 led = Pin(25,Pin.OUT) # Heltec V2
