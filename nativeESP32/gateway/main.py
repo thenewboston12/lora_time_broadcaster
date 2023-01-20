@@ -124,14 +124,7 @@ while True:
     # get precise time
     seconds = time.time() + 1
 
-    sync_pkg = struct.pack(_LORA_PREFIX_FORMAT, ord('S'))
     time_pkg = struct.pack(_LORA_TIME_FORMAT, seconds)
-
-    # send sync packet
-    led.value(1)
-    lora.send(sync_pkg)
-    print("Sent sync packet")
-    led.value(0)
 
     # send time packet
     led.value(1)

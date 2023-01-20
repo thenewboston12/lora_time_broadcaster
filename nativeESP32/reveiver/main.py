@@ -68,23 +68,14 @@ rtc = RTC()
 
 chrono = Chrono()
 need_time = 1
-xsync = 0
 xtime = 0
 timeout = 800000
 synced = 0
 
 def s_handler(recv_pkg):
-    global xsync
     global xtime
     # print(recv_pkg)
-    if (len(recv_pkg) == 1):
-        try:
-            (xsync,) = struct.unpack(_LORA_PREFIX_FORMAT, recv_pkg)
-        except:
-            print("Could not unpack!")
-        if (xsync == 83):
-            print("Synced!", xsync)
-    elif (len(recv_pkg) > 2) and (need_time == 1):
+    if (len(recv_pkg) > 2):
         try:
             (xtime,) = struct.unpack(_LORA_TIME_FORMAT, recv_pkg)
         except:
@@ -97,35 +88,24 @@ while(True):
     chrono.start()
     oled_lines("Time Syncrhonization", "and Broadcaster", "Waiting for sync...", " ")
     print("Waiting for sync/time...")
-    xsync = 0
     xtime = 0
     sync_start = chrono.read_us()
     led.value(1)
     lora.on_recv(s_handler)
     lora.recv()
     while(chrono.read_us() - sync_start < timeout) and (synced == 1):
-        if (xsync == 83):
+        if (xtime > 0):
             break
     while(True) and (synced == 0):
-        if (xsync == 83):
+        if (xtime > 0):
             synced = 1
             break
     led.value(0)
-    if (xsync != 83):
+    if (xtime == 0):
         synced = 0
-        print("missed sync")
     if (need_time == 1):
-        sync_start = chrono.read_us()
-        led.value(1)
-        while(chrono.read_us() - sync_start < timeout+100000):
-            if (xtime > 0):
-                break
         out = time.localtime(xtime)
         print("{}.{}.{} {}:{}:{}".format(out[2],out[1],out[0],out[3],out[4],out[5]))
-        led.value(0)
-        lora.sleep()
-        time.sleep_ms(_TIME_PERIOD_MS - 80)
-    else:
-        lora.sleep()
-        time.sleep_us(_TIME_PERIOD_MS*1000 + 827392 - 80000)
+    lora.sleep()
+    time.sleep_us(_TIME_PERIOD_MS*1000 - 80000)
     print("--------")
