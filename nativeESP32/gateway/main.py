@@ -15,6 +15,8 @@ from time import sleep
 import utime
 import gc
 import _thread
+from chrono import Chrono
+import hashlib
 
 led = Pin(25,Pin.OUT) # Heltec V2
 # led = Pin(2,Pin.OUT) # TTGO
@@ -34,7 +36,7 @@ def oled_lines(line1, line2, line3, line4):
     oled.text(line4, 0, 35)
     oled.show()
 
-oled_lines("Time Syncrhonization", "and Broadcaster", " ", " ")
+oled_lines("Time Sync", "and Broadcaster", "GATEWAY", " ")
 
 # SPI pins
 SCK  = 5
@@ -64,7 +66,8 @@ _NTP_URL = "pool.ntp.org"
 _TIMEZONE_OFFSET = 6*60*60 # For GMT +6
 
 # time period to send the sync packet (in ms)
-_TIME_PERIOD_MS = 5000
+_TIME_PERIOD_MS = 10000
+_AIRTIME_MS =  1320
 
 # set LoRa parameters
 lora.set_spreading_factor(12)
@@ -73,16 +76,27 @@ lora.set_frequency(433.1)
 #Connect to the Wi-Fi network
 wlan = network.WLAN(network.STA_IF)
 wlan.active(True)
+wifi_text = _WIFI_SSID+"..."
 if not wlan.isconnected():
-    print('connecting to network...')
+    print('\nconnecting to',wifi_text)
+    oled_lines("Time Sync", "and Broadcaster", "Connecting to", "{} ".format(wifi_text))
+
     wlan.connect(_WIFI_SSID, _WIFI_PASS)
     while not wlan.isconnected():
         pass
 print("connected to WiFi")
-oled_lines("Time Syncrhonization", "and Broadcaster", "Connected to WiFi", " ")
+oled_lines("Time Sync", "and Broadcaster", "Connected to WiFi", " ")
 
-_LORA_TIME_FORMAT = "!I"
+_LORA_TIME_FORMAT = "!HII"
 _LORA_PREFIX_FORMAT = "!b"
+
+def sha_256(message):
+    hashed = binascii.hexlify(hashlib.sha256(message.encode('utf-8')).digest())
+    #convert first 4 bytes to an integer
+    val_int = int(hashed[:8], 16)
+
+    return val_int
+
 
 rtc = RTC()
 
@@ -109,28 +123,48 @@ def set_time():
 def ntp_sync():
     while(True):
         # Connect to ntp server
+        oled_lines("Time Sync", "and Broadcaster", "Setting NTP...", " ")
+
         set_time()
 
-        oled_lines("Time Syncrhonization", "and Broadcaster", "Set NTP clock", " ")
         time.sleep(30)
 
 _thread.start_new_thread(ntp_sync, ())
 time.sleep(5)
 
+chrono = Chrono()
+
+chrono.start()
+
 while True:
+
     cur_time = time.localtime()
     print("\nCurrent time: ", cur_time)
 
     # get precise time
-    seconds = time.time() + 1
+    seconds = time.time()
+    NET_ID = 33
+    to_hash =str(NET_ID) + str(seconds)
+    digest = sha_256(to_hash)
 
-    time_pkg = struct.pack(_LORA_TIME_FORMAT, seconds)
+    time_pkg = struct.pack(_LORA_TIME_FORMAT, NET_ID, seconds, digest )
+
 
     # send time packet
     led.value(1)
+    print("1 LOOP MS: ",chrono.read_us()/1000000)
+
+    chrono.reset()
+    chrono.start()
+
+    chrono.reset()
+    chrono.start()
+    oled_lines("Time Sync", "and Broadcaster", "Sending Time...", " ")
+
     lora.send(time_pkg)
     print("Sent time packet")
     led.value(0)
 
+    _DELAY_MS = 840
     # Send sync time every _TIME_PERIOD_MS milliseconds
-    time.sleep_ms(_TIME_PERIOD_MS)
+    time.sleep_ms(_TIME_PERIOD_MS - _DELAY_MS)
