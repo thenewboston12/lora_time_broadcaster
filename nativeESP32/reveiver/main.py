@@ -34,7 +34,7 @@ def oled_lines(line1, line2, line3, line4):
     oled.text(line4, 0, 35)
     oled.show()
 
-oled_lines("Time Sync", "and Broadcaster", " ", " ")
+oled_lines("Time Sync", "and Broadcaster", "RECEIVER", " ")
 
 # SPI pins
 SCK  = 5
@@ -55,57 +55,83 @@ spi.init()
 lora = LoRa( spi, cs=Pin(CS, Pin.OUT), rx=Pin(RX, Pin.IN), )
 
 # time period to send the sync packet (in ms)
-_TIME_PERIOD_MS = 5000
+_TIME_PERIOD_MS = 10_000
+_AIRTIME_MS = 1320
+_GUARD_TIME_MS = 30
 
 # set LoRa parameters
 lora.set_spreading_factor(12)
 lora.set_frequency(433.1)
 
-_LORA_TIME_FORMAT = "!I"
+_LORA_TIME_FORMAT = "!HII"
 _LORA_PREFIX_FORMAT = "!b"
 
 rtc = RTC()
 
 chrono = Chrono()
+c2 = Chrono()
 need_time = 1
 xtime = 0
-timeout = 800000
+timeout = 800_000
 synced = 0
+
+netid =0
+digest =0
 
 def s_handler(recv_pkg):
     global xtime
     # print(recv_pkg)
     if (len(recv_pkg) > 2):
         try:
-            (xtime,) = struct.unpack(_LORA_TIME_FORMAT, recv_pkg)
+            (netid, xtime, digest ) = struct.unpack(_LORA_TIME_FORMAT, recv_pkg)
+            print("NETID: ", netid)
+            print("XTIME: ", xtime)
+            print("DIGEST: ", digest)
+
+            #TODO: check the digest on the message 
         except:
             print("Could not unpack!")
         if (xtime > 0):
-            print("Synced time!", xtime)
+            print("Got sync time!", xtime)
 
+unsync = False
+c2.start()
 while(True):
     chrono.reset()
     chrono.start()
-    oled_lines("Time Syncrhonization", "and Broadcaster", "Waiting for sync...", " ")
+    oled_lines("Time Sync", "RECEIVER", "Waiting for sync...", " ")
     print("Waiting for sync/time...")
     xtime = 0
     sync_start = chrono.read_us()
     led.value(1)
     lora.on_recv(s_handler)
     lora.recv()
-    while(chrono.read_us() - sync_start < timeout) and (synced == 1):
+    while(chrono.read_us() - sync_start < _AIRTIME_MS*1000) and (synced == 1):
         if (xtime > 0):
+            print("caught while idle")
             break
+
+    print("synced:", synced)
+    print("xtime:",  xtime)
     while(True) and (synced == 0):
         if (xtime > 0):
             synced = 1
             break
+
+    print("1 LOOP in ms: ", c2.read_us()/1000)
+    c2.reset()
+    c2.start()
+
     led.value(0)
+    # failed to get the packet
     if (xtime == 0):
+        print("OUT OF SYNC!")
         synced = 0
+
     if (need_time == 1):
         out = time.localtime(xtime)
         print("{}.{}.{} {}:{}:{}".format(out[2],out[1],out[0],out[3],out[4],out[5]))
     lora.sleep()
-    time.sleep_us(_TIME_PERIOD_MS*1000 - 80000)
+    _SLEEP_TIME_MS = _AIRTIME_MS -500
+    time.sleep_us(_TIME_PERIOD_MS*1000 -_SLEEP_TIME_MS*1000 )
     print("--------")
